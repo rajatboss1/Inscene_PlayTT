@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 
 interface ChatPanelProps {
@@ -92,8 +91,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
     const apiKey = getGroqKey();
     
     if (!apiKey) {
-      console.error("GROQ_API_KEY is missing. Ensure VITE_GROQ_API_KEY is set in Vercel.");
-      setMessages(prev => [...prev, { role: 'assistant', content: "API Error: Please set VITE_GROQ_API_KEY in settings and redeploy." }]);
+      console.error("API Key is missing. Ensure VITE_GROQ_API_KEY is set in Vercel.");
+      setMessages(prev => [...prev, { role: 'assistant', content: "API Error: Please set API Key in settings and redeploy." }]);
       return;
     }
 
@@ -127,7 +126,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `Groq failed with status ${response.status}`);
+        throw new Error(errData.error?.message || `Engine failed with status ${response.status}`);
       }
 
       const data = await response.json();
@@ -140,7 +139,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
     } catch (error: any) {
       console.error("Chat Error:", error);
       const errorDisplay = error.message.includes("status 401") 
-        ? "Invalid API Key. Check your Groq settings." 
+        ? "Invalid API Key. Check your environment settings." 
         : "Network issue hai shayad... ek baar phir try kar?";
       setMessages(prev => [...prev, { role: 'assistant', content: errorDisplay }]);
     } finally {
@@ -221,7 +220,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
             </button>
           </div>
           <div className="mt-4 flex justify-center opacity-40">
-            <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">Inscene Personality Engine • Groq Llama 3.3</p>
+            <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">Inscene Personality Engine</p>
           </div>
         </div>
       </div>
