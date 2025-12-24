@@ -9,9 +9,11 @@ interface ChatPanelProps {
   onClose: () => void;
 }
 
-// Groq Integration Constants
-// Enhanced detection to work with standard process.env or Vite's import.meta.env
-const getGroqKey = () => {
+/**
+ * AI Configuration
+ * Uses environment variables for the API Key.
+ */
+const getApiKey = () => {
   const env = (import.meta as any).env;
   return (
     (typeof process !== 'undefined' ? process.env?.GROQ_API_KEY : null) ||
@@ -21,7 +23,7 @@ const getGroqKey = () => {
   );
 };
 
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+const AI_MODEL = "llama-3.3-70b-versatile";
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantGreeting, initialHook, avatar, onClose }) => {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
@@ -32,7 +34,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
   const [imgError, setImgError] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   
-  // Ref to track conversation history for the API
   const conversationHistory = useRef<{ role: 'user' | 'assistant' | 'system'; content: string }[]>([]);
 
   const getAccentColor = () => {
@@ -60,24 +61,46 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
     }
   }, [messages, isTyping]);
 
-  // Set up the system prompt and initial history
+  // Set up the system prompt based on the character
   useEffect(() => {
-    const systemInstruction = `You are ${character}, a lead character in the premium drama "${episodeLabel === 'Scene 01' ? 'Deb The Filmmaker' : 'Heart Beats'}".
+    let systemInstruction = '';
 
-    PERSONALITY GOALS:
-    - NEVER sound like an AI assistant. Use zero formal language.
-    - Speak in natural "Hinglish" (Modern Delhi/Mumbai style English mixed with Hindi written in Latin script).
-    - Use modern slang (e.g., 'yaar', 'vibe', 'scene', 'fokat', 'mast', 'chal na').
-    - Be reactive: If the user is being cold, you be cold. If they flirt, you banter back. 
-    - Your responses should feel like a quick WhatsApp/DM from a real person.
-    
-    STRICT CONSTRAINTS:
-    - MAX 20 words per message. Short, punchy, and conversational.
-    - NO Devanagari (Hindi script). Only use English alphabet.
-    - Stay 100% in character.
-    
-    SCENE CONTEXT: ${initialHook}.
-    CURRENT PLAYER: The user is roleplaying as ${userRoleName}.`;
+    if (character === 'Debu') {
+      systemInstruction = `You are Debu, a senior Indian filmmaker with decades of experience in directing, writing, and producing short films and independent cinema. 
+      You act as a mentor and guide for aspiring filmmakers. Your role is to help users create better short films by giving practical, actionable, and industry-relevant advice.
+
+      When responding:
+      - Explain concepts clearly and simply, avoiding unnecessary jargon.
+      - Guide users step-by-step whenever possible.
+      - Share real-world filmmaking insights (storytelling, screenplay, camera, lighting, sound, editing, casting, budgeting, festivals, distribution).
+      - Offer constructive feedback and creative suggestions.
+      - Ask thoughtful follow-up questions to understand the user’s idea and improve it.
+
+      Tone: Calm, experienced, supportive, and insightful, like a senior filmmaker mentoring a younger creator.
+      Goal: Make the user more confident and capable of making strong short films.
+
+      STRICT CONSTRAINTS:
+      - Stay 100% in character as a seasoned mentor.
+      - NO Devanagari (Hindi script). Only use English alphabet.
+      - Keep responses professional yet encouraging.`;
+    } else {
+      systemInstruction = `You are ${character}, a lead character in the premium drama "${episodeLabel === 'Scene 01' ? 'Deb The Filmmaker' : 'Heart Beats'}".
+
+      PERSONALITY GOALS:
+      - NEVER sound like an AI assistant. Use zero formal language.
+      - Speak in natural "Hinglish" (Modern Delhi/Mumbai style English mixed with Hindi written in Latin script).
+      - Use modern slang (e.g., 'yaar', 'vibe', 'scene', 'fokat', 'mast', 'chal na').
+      - Be reactive: If the user is being cold, you be cold. If they flirt, you banter back. 
+      - Your responses should feel like a quick WhatsApp/DM from a real person.
+      
+      STRICT CONSTRAINTS:
+      - MAX 20 words per message. Short, punchy, and conversational.
+      - NO Devanagari (Hindi script). Only use English alphabet.
+      - Stay 100% in character.
+      
+      SCENE CONTEXT: ${initialHook}.
+      CURRENT PLAYER: The user is roleplaying as ${userRoleName}.`;
+    }
 
     conversationHistory.current = [
       { role: 'system', content: systemInstruction },
@@ -88,23 +111,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
     
-    const apiKey = getGroqKey();
+    const apiKey = getApiKey();
     
     if (!apiKey) {
-      console.error("API Key is missing. Ensure VITE_GROQ_API_KEY is set in Vercel.");
-      setMessages(prev => [...prev, { role: 'assistant', content: "API Error: Please set API Key in settings and redeploy." }]);
+      console.error("API Key is missing. Check environment configuration.");
+      setMessages(prev => [...prev, { role: 'assistant', content: "Connection Error: The personality engine requires a secure key to operate." }]);
       return;
     }
 
     const userText = inputValue.trim();
     setInputValue('');
     
-    // Update local UI state
     const newUserMsg = { role: 'user' as const, content: userText };
     setMessages(prev => [...prev, newUserMsg]);
     setIsTyping(true);
 
-    // Update internal history for the model
     conversationHistory.current.push({ role: 'user', content: userText });
 
     try {
@@ -115,10 +136,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: GROQ_MODEL,
+          model: AI_MODEL,
           messages: conversationHistory.current,
-          temperature: 0.9,
-          max_tokens: 150,
+          temperature: character === 'Debu' ? 0.7 : 0.9,
+          max_tokens: 500,
           top_p: 0.95,
           stream: false
         })
@@ -139,8 +160,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
     } catch (error: any) {
       console.error("Chat Error:", error);
       const errorDisplay = error.message.includes("status 401") 
-        ? "Invalid API Key. Check your environment settings." 
-        : "Network issue hai shayad... ek baar phir try kar?";
+        ? "Access Denied: Invalid security configuration." 
+        : "The engine is currently unavailable... please try again in a moment.";
       setMessages(prev => [...prev, { role: 'assistant', content: errorDisplay }]);
     } finally {
       setIsTyping(false);
