@@ -11,8 +11,17 @@ interface ChatPanelProps {
 }
 
 // Groq Integration Constants
-// The API key is now fetched from environment variables for security.
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+// Enhanced detection to work with standard process.env or Vite's import.meta.env
+const getGroqKey = () => {
+  const env = (import.meta as any).env;
+  return (
+    (typeof process !== 'undefined' ? process.env?.GROQ_API_KEY : null) ||
+    (env?.VITE_GROQ_API_KEY) ||
+    (env?.GROQ_API_KEY) ||
+    null
+  );
+};
+
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantGreeting, initialHook, avatar, onClose }) => {
@@ -80,9 +89,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
     
-    if (!GROQ_API_KEY) {
-      console.error("GROQ_API_KEY is missing in environment variables.");
-      setMessages(prev => [...prev, { role: 'assistant', content: "System error: API Key missing. Check Vercel settings." }]);
+    const apiKey = getGroqKey();
+    
+    if (!apiKey) {
+      console.error("GROQ_API_KEY is missing. Ensure VITE_GROQ_API_KEY is set in Vercel.");
+      setMessages(prev => [...prev, { role: 'assistant', content: "API Error: Please set VITE_GROQ_API_KEY in settings and redeploy." }]);
       return;
     }
 
@@ -101,7 +112,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -114,7 +125,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
         })
       });
 
-      if (!response.ok) throw new Error('Groq connection failed');
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error?.message || `Groq failed with status ${response.status}`);
+      }
 
       const data = await response.json();
       const aiResponse = data.choices[0]?.message?.content || "Signal gaya... phir se bolo?";
@@ -123,9 +137,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
       setMessages(prev => [...prev, newAiMsg]);
       conversationHistory.current.push({ role: 'assistant', content: aiResponse });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Chat Error:", error);
-      const errorDisplay = "Network issue hai shayad... ek baar phir try kar?";
+      const errorDisplay = error.message.includes("status 401") 
+        ? "Invalid API Key. Check your Groq settings." 
+        : "Network issue hai shayad... ek baar phir try kar?";
       setMessages(prev => [...prev, { role: 'assistant', content: errorDisplay }]);
     } finally {
       setIsTyping(false);
