@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI, Chat, GenerateContentResponse } from "@google/genai";
 
 interface ChatPanelProps {
   character: string;
@@ -11,16 +10,22 @@ interface ChatPanelProps {
   onClose: () => void;
 }
 
+// Groq Integration Constants
+// The API key is now fetched from environment variables for security.
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_MODEL = "llama-3.3-70b-versatile";
+
 const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantGreeting, initialHook, avatar, onClose }) => {
-  const [messages, setMessages] = useState<{ role: 'user' | 'model'; text: string }[]>([
-    { role: 'model', text: instantGreeting }
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
+    { role: 'assistant', content: instantGreeting }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const chatInstance = useRef<Chat | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isInitializing = useRef(false);
+  
+  // Ref to track conversation history for the API
+  const conversationHistory = useRef<{ role: 'user' | 'assistant' | 'system'; content: string }[]>([]);
 
   const getAccentColor = () => {
     if (character === 'Priyank') return '#3b82f6';
@@ -47,88 +52,83 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
     }
   }, [messages, isTyping]);
 
+  // Set up the system prompt and initial history
   useEffect(() => {
-    const initChat = async () => {
-      if (isInitializing.current || chatInstance.current) return;
-      isInitializing.current = true;
+    const systemInstruction = `You are ${character}, a lead character in the premium drama "${episodeLabel === 'Scene 01' ? 'Deb The Filmmaker' : 'Heart Beats'}".
 
-      try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        const systemInstruction = `You are ${character}, a lead character in the premium drama "${episodeLabel === 'Scene 01' ? 'Deb The Filmmaker' : 'Heart Beats'}".
+    PERSONALITY GOALS:
+    - NEVER sound like an AI assistant. Use zero formal language.
+    - Speak in natural "Hinglish" (Modern Delhi/Mumbai style English mixed with Hindi written in Latin script).
+    - Use modern slang (e.g., 'yaar', 'vibe', 'scene', 'fokat', 'mast', 'chal na').
+    - Be reactive: If the user is being cold, you be cold. If they flirt, you banter back. 
+    - Your responses should feel like a quick WhatsApp/DM from a real person.
+    
+    STRICT CONSTRAINTS:
+    - MAX 20 words per message. Short, punchy, and conversational.
+    - NO Devanagari (Hindi script). Only use English alphabet.
+    - Stay 100% in character.
+    
+    SCENE CONTEXT: ${initialHook}.
+    CURRENT PLAYER: The user is roleplaying as ${userRoleName}.`;
 
-        PERSONALITY GOALS:
-        - NEVER sound like an AI assistant. Use zero formal language.
-        - Speak in natural "Hinglish" (Modern Delhi/Mumbai style English mixed with Hindi written in Latin script).
-        - Use modern slang (e.g., 'yaar', 'vibe', 'scene', 'fokat', 'mast').
-        - Be reactive: If the user is being cold, you be cold. If they flirt, you banter back. 
-        - Your responses should feel like a quick WhatsApp message from a real person.
-        
-        STRICT CONSTRAINTS:
-        - MAX 20 words per message. Short & punchy.
-        - NO Devanagari (Hindi script). Only use English alphabet.
-        - Stay 100% in character.
-        
-        SCENE CONTEXT: ${initialHook}.
-        CURRENT PLAYER: The user is roleplaying as ${userRoleName}.`;
+    conversationHistory.current = [
+      { role: 'system', content: systemInstruction },
+      { role: 'assistant', content: instantGreeting }
+    ];
+  }, [character, episodeLabel, initialHook, instantGreeting, userRoleName]);
 
-        // Updated to gemini-flash-lite-latest per request for optimized performance and scaling.
-        chatInstance.current = ai.chats.create({
-          model: 'gemini-flash-lite-latest',
-          config: { 
-            systemInstruction,
-            temperature: 0.9, 
-            topP: 0.95,
-            maxOutputTokens: 100,
-          },
-        });
-      } catch (e) {
-        console.error("Initialization failed", e);
-      } finally {
-        isInitializing.current = false;
-      }
-    };
-
-    initChat();
-  }, [character, episodeLabel, initialHook]);
-
-  const handleSend = async (retryCount = 0) => {
-    if (!inputValue.trim() || !chatInstance.current || (isTyping && retryCount === 0)) return;
-
-    const userText = inputValue.trim();
-    if (retryCount === 0) {
-      setInputValue('');
-      setMessages(prev => [...prev, { role: 'user', text: userText }]);
-      setIsTyping(true);
+  const handleSend = async () => {
+    if (!inputValue.trim() || isTyping) return;
+    
+    if (!GROQ_API_KEY) {
+      console.error("GROQ_API_KEY is missing in environment variables.");
+      setMessages(prev => [...prev, { role: 'assistant', content: "System error: API Key missing. Check Vercel settings." }]);
+      return;
     }
 
+    const userText = inputValue.trim();
+    setInputValue('');
+    
+    // Update local UI state
+    const newUserMsg = { role: 'user' as const, content: userText };
+    setMessages(prev => [...prev, newUserMsg]);
+    setIsTyping(true);
+
+    // Update internal history for the model
+    conversationHistory.current.push({ role: 'user', content: userText });
+
     try {
-      const result: GenerateContentResponse = await chatInstance.current.sendMessage({ message: userText });
-      const responseText = result.text;
-      
-      if (!responseText) {
-        setMessages(prev => [...prev, { role: 'model', text: "Signal gaya... phir se bolo?" }]);
-      } else {
-        setMessages(prev => [...prev, { role: 'model', text: responseText }]);
-      }
-    } catch (error: any) {
-      const errorMsg = error?.message?.toLowerCase() || "";
-      
-      if ((errorMsg.includes("429") || errorMsg.includes("fetch")) && retryCount < 1) {
-        setTimeout(() => handleSend(retryCount + 1), 1500);
-        return;
-      }
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: conversationHistory.current,
+          temperature: 0.9,
+          max_tokens: 150,
+          top_p: 0.95,
+          stream: false
+        })
+      });
 
+      if (!response.ok) throw new Error('Groq connection failed');
+
+      const data = await response.json();
+      const aiResponse = data.choices[0]?.message?.content || "Signal gaya... phir se bolo?";
+      
+      const newAiMsg = { role: 'assistant' as const, content: aiResponse };
+      setMessages(prev => [...prev, newAiMsg]);
+      conversationHistory.current.push({ role: 'assistant', content: aiResponse });
+
+    } catch (error) {
       console.error("Chat Error:", error);
-      
-      const isSafety = errorMsg.includes("safety") || errorMsg.includes("blocked");
-      const errorDisplay = isSafety 
-        ? "Yeh thoda zyada ho gaya... chalo baad mein milte hai!" 
-        : "Network issue hai shayad... ek baar phir try kar?";
-
-      setMessages(prev => [...prev, { role: 'model', text: errorDisplay }]);
+      const errorDisplay = "Network issue hai shayad... ek baar phir try kar?";
+      setMessages(prev => [...prev, { role: 'assistant', content: errorDisplay }]);
     } finally {
-      if (retryCount >= 0) setIsTyping(false);
+      setIsTyping(false);
     }
   };
 
@@ -170,7 +170,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
                   ? 'bg-slate-900 border border-slate-800 text-white rounded-tr-none font-medium' 
                   : `bg-slate-100 border border-slate-200 text-slate-800 font-semibold rounded-tl-none`
               }`}>
-                {m.text}
+                {m.content}
               </div>
             </div>
           ))}
@@ -196,7 +196,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
               className="w-full bg-slate-100 border border-slate-200 rounded-[2rem] px-8 py-5 text-sm font-medium focus:outline-none focus:bg-white transition-all text-slate-900 placeholder:text-slate-400 pr-16 shadow-inner"
             />
             <button 
-              onClick={() => handleSend()}
+              onClick={handleSend}
               disabled={!inputValue.trim() || isTyping}
               className="absolute right-2 top-2 bottom-2 w-12 h-12 rounded-full flex items-center justify-center text-white shadow-xl active:scale-90 transition-all disabled:opacity-30"
               style={{ backgroundColor: accentColor }}
@@ -205,7 +205,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
             </button>
           </div>
           <div className="mt-4 flex justify-center opacity-40">
-            <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">Inscene Engine • Gemini 2.5 Flash Lite</p>
+            <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">Inscene Personality Engine • Groq Llama 3.3</p>
           </div>
         </div>
       </div>
