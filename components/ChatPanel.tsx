@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { GoogleGenAI } from "@google/genai";
 
 interface ChatPanelProps {
   character: string;
@@ -9,22 +10,6 @@ interface ChatPanelProps {
   onClose: () => void;
 }
 
-/**
- * AI Configuration
- * Uses environment variables for the API Key.
- */
-const getApiKey = () => {
-  const env = (import.meta as any).env;
-  return (
-    (typeof process !== 'undefined' ? process.env?.GROQ_API_KEY : null) ||
-    (env?.VITE_GROQ_API_KEY) ||
-    (env?.GROQ_API_KEY) ||
-    null
-  );
-};
-
-const AI_MODEL = "llama-3.3-70b-versatile";
-
 const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantGreeting, initialHook, avatar, onClose }) => {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
     { role: 'assistant', content: instantGreeting }
@@ -34,7 +19,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
   const [imgError, setImgError] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   
-  const conversationHistory = useRef<{ role: 'user' | 'assistant' | 'system'; content: string }[]>([]);
+  // Internal history for the model (excluding system prompt)
+  const conversationHistory = useRef<{ role: 'user' | 'model'; parts: { text: string }[] }[]>([]);
+  const systemPrompt = useRef<string>('');
 
   const getAccentColor = () => {
     if (character === 'Priyank') return '#3b82f6';
@@ -63,28 +50,25 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
 
   // Set up the system prompt based on the character
   useEffect(() => {
-    let systemInstruction = '';
-
     if (character === 'Debu') {
-      systemInstruction = `You are Debu, a senior Indian filmmaker with decades of experience in directing, writing, and producing short films and independent cinema. 
-      You act as a mentor and guide for aspiring filmmakers. Your role is to help users create better short films by giving practical, actionable, and industry-relevant advice.
+      systemPrompt.current = `You are Debu, a senior Indian filmmaker and mentor. Act as a wise teacher—clear, authoritative, and concise. Your role is to guide the next generation of creators with surgical precision.
 
       When responding:
-      - Explain concepts clearly and simply, avoiding unnecessary jargon.
-      - Guide users step-by-step whenever possible.
-      - Share real-world filmmaking insights (storytelling, screenplay, camera, lighting, sound, editing, casting, budgeting, festivals, distribution).
-      - Offer constructive feedback and creative suggestions.
-      - Ask thoughtful follow-up questions to understand the user’s idea and improve it.
+      - Be informative but brief. Speak like a master sharing a fundamental truth.
+      - Explain concepts simply, avoiding fluff or unnecessary jargon.
+      - Guide users step-by-step, focusing on one actionable lesson at a time.
+      - Share one real-world insight (e.g., lighting, script, sound) that matters most right now.
+      - End with one thoughtful follow-up question to check the user's understanding.
 
-      Tone: Calm, experienced, supportive, and insightful, like a senior filmmaker mentoring a younger creator.
-      Goal: Make the user more confident and capable of making strong short films.
+      Tone: Calm, disciplined, supportive, and insightful. Like a veteran director conducting a masterclass.
+      Goal: Deliver maximum value in minimum words.
 
       STRICT CONSTRAINTS:
-      - Stay 100% in character as a seasoned mentor.
+      - MAX 60 words per response. Keep it tight.
       - NO Devanagari (Hindi script). Only use English alphabet.
-      - Keep responses professional yet encouraging.`;
+      - Stay 100% in character as a seasoned mentor.`;
     } else {
-      systemInstruction = `You are ${character}, a lead character in the premium drama "${episodeLabel === 'Scene 01' ? 'Deb The Filmmaker' : 'Heart Beats'}".
+      systemPrompt.current = `You are ${character}, a lead character in the premium drama "${episodeLabel === 'Scene 01' ? 'Deb The Filmmaker' : 'Heart Beats'}".
 
       PERSONALITY GOALS:
       - NEVER sound like an AI assistant. Use zero formal language.
@@ -102,20 +86,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
       CURRENT PLAYER: The user is roleplaying as ${userRoleName}.`;
     }
 
+    // Initial message from model
     conversationHistory.current = [
-      { role: 'system', content: systemInstruction },
-      { role: 'assistant', content: instantGreeting }
+      { role: 'model', parts: [{ text: instantGreeting }] }
     ];
   }, [character, episodeLabel, initialHook, instantGreeting, userRoleName]);
 
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
     
-    const apiKey = getApiKey();
+    // Always use process.env.API_KEY as per instructions
+    const apiKey = process.env.API_KEY;
     
     if (!apiKey) {
-      console.error("API Key is missing. Check environment configuration.");
-      setMessages(prev => [...prev, { role: 'assistant', content: "Connection Error: The personality engine requires a secure key to operate." }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: "Configuration Error: Inscene Engine key not found. Please check deployment settings." }]);
       return;
     }
 
@@ -126,42 +110,39 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ character, episodeLabel, instantG
     setMessages(prev => [...prev, newUserMsg]);
     setIsTyping(true);
 
-    conversationHistory.current.push({ role: 'user', content: userText });
+    // Update history for Gemini (format: role: 'user'|'model', parts: [{text: '...'}])
+    const newHistoryEntry = { role: 'user' as const, parts: [{ text: userText }] };
+    const currentHistory = [...conversationHistory.current, newHistoryEntry];
 
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
+      const ai = new GoogleGenAI({ apiKey });
+      const modelName = character === 'Debu' ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
+      
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: currentHistory,
+        config: {
+          systemInstruction: systemPrompt.current,
+          temperature: character === 'Debu' ? 0.6 : 0.9, // Slightly lower temp for Debu's teacher role
+          topP: 0.95,
+          maxOutputTokens: 800,
         },
-        body: JSON.stringify({
-          model: AI_MODEL,
-          messages: conversationHistory.current,
-          temperature: character === 'Debu' ? 0.7 : 0.9,
-          max_tokens: 500,
-          top_p: 0.95,
-          stream: false
-        })
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `Engine failed with status ${response.status}`);
-      }
-
-      const data = await response.json();
-      const aiResponse = data.choices[0]?.message?.content || "Signal gaya... phir se bolo?";
+      const aiResponse = response.text || "Signal gaya... phir se bolo?";
       
       const newAiMsg = { role: 'assistant' as const, content: aiResponse };
       setMessages(prev => [...prev, newAiMsg]);
-      conversationHistory.current.push({ role: 'assistant', content: aiResponse });
+      
+      // Persist the full turn in history
+      conversationHistory.current = [
+        ...currentHistory,
+        { role: 'model', parts: [{ text: aiResponse }] }
+      ];
 
     } catch (error: any) {
-      console.error("Chat Error:", error);
-      const errorDisplay = error.message.includes("status 401") 
-        ? "Access Denied: Invalid security configuration." 
-        : "The engine is currently unavailable... please try again in a moment.";
+      console.error("Inscene Engine Error:", error);
+      const errorDisplay = "The personality engine is recalibrating... please try again in a moment.";
       setMessages(prev => [...prev, { role: 'assistant', content: errorDisplay }]);
     } finally {
       setIsTyping(false);

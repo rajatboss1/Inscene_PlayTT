@@ -1,7 +1,7 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import Logo from './components/Logo.tsx';
 import ChatPanel from './components/ChatPanel.tsx';
+import { Analytics } from "@vercel/analytics/react";
 
 /**
  * Optimized Image Proxy Utility
@@ -478,6 +478,8 @@ const App: React.FC = () => {
           onClose={() => setChatData(null)}
         />
       )}
+
+      <Analytics />
 
       <style>{`
         .hide-scrollbar::-webkit-scrollbar { display: none; }
